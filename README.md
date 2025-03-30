@@ -1,5 +1,3 @@
-# PowerShellScripts
-
 # Managed Identity API Permission Assigner
 
 Assign Microsoft Graph API permissions to Azure Managed Identities via PowerShell when GUI options aren't available.
