@@ -1,3 +1,8 @@
+## YouTube Channel: 
+```
+https://www.youtube.com/channel/UCMdH5UW4Iyi0iaUksW8hDPA/?sub_confirmation=1
+```
+
 # 🚀 PowerShell Automation Scripts
 
 Welcome to my collection of PowerShell scripts focused on automation across Microsoft Sentinel, Defender XDR, Azure Logic Apps, and broader Azure services — with a few extras sprinkled in!
