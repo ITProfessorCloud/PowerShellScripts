@@ -27,7 +27,7 @@ These scripts are designed to simplify daily operations, enhance security workfl
 ## ⚡ Getting Started
 
 Each script includes:
-- A brief **description** (`.SYNOPSIS` and `.DESCRIPTION`)
+- A brief **description** 
 - Clear **configuration sections** where you can set your parameters
 - Minimal prerequisites to make deployment easy
 
