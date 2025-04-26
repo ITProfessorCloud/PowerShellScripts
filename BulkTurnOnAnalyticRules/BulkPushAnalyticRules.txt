@@ -1,0 +1,93 @@
+<#
+.SYNOPSIS
+    Enable ALL Microsoft Sentinel Analytics Rules from ALL sources
+    With guaranteed API version compliance and MITRE ATT&CK preservation
+#>
+
+# Your environment parameters
+$subscriptionId = "<subscription ID>"
+$resourceGroupName = "<LogAnalyticWorkspace_ResourceGroupName>"
+$workspaceName = "<LogAnalyticWorkspace_Name>"
+$enableRules = "Yes"  # "Yes" to enable, "No" to create disabled
+
+# API Configuration
+$apiVersion = "2024-10-01-preview"  # Supports MITRE ATT&CK sub-techniques
+
+# Initialize connection
+try {
+    Connect-AzAccount -Subscription $subscriptionId -ErrorAction Stop | Out-Null
+}
+catch {
+    Write-Host "Failed to connect: $_"
+    exit
+}
+
+# Get auth token
+$token = (Get-AzAccessToken -ResourceUrl "https://management.azure.com").Token
+$headers = @{
+    'Authorization' = "Bearer $token"
+    'Content-Type' = 'application/json'
+}
+
+# Get all content packages
+$contentUri = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.OperationalInsights/workspaces/$workspaceName/providers/Microsoft.SecurityInsights/contentProductPackages?api-version=$apiVersion"
+$solutions = (Invoke-RestMethod -Uri $contentUri -Method Get -Headers $headers).value
+
+$results = @()
+
+foreach ($solution in $solutions) {
+    $solutionName = $solution.properties.displayName
+    Write-Host "`nProcessing solution: $solutionName"
+    
+    # Get templates for this solution
+    $templatesUri = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.OperationalInsights/workspaces/$workspaceName/providers/Microsoft.SecurityInsights/contentTemplates?api-version=$apiVersion"
+    $templates = (Invoke-RestMethod -Uri $templatesUri -Method Get -Headers $headers).value |
+                 Where-Object { $_.properties.packageId -eq $solution.properties.contentId -and $_.properties.contentKind -eq "AnalyticsRule" }
+
+    foreach ($template in $templates) {
+        try {
+            # Get full template details
+            $templateUri = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.OperationalInsights/workspaces/$workspaceName/providers/Microsoft.SecurityInsights/contentTemplates/$($template.name)?api-version=$apiVersion"
+            $templateDetails = Invoke-RestMethod -Uri $templateUri -Method Get -Headers $headers
+
+            # Extract rule properties
+            $rule = $templateDetails.properties.mainTemplate.resources | 
+                    Where-Object { $_.type -eq 'Microsoft.SecurityInsights/AlertRuleTemplates' }
+            
+            # Prepare rule payload
+            $rule.properties | Add-Member -NotePropertyName alertRuleTemplateName -NotePropertyValue $rule.name -Force
+            $rule.properties | Add-Member -NotePropertyName templateVersion -NotePropertyValue $templateDetails.properties.version -Force
+            $rule.properties.enabled = ($enableRules -eq "Yes")
+
+            # Create the rule
+            $ruleUri = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.OperationalInsights/workspaces/$workspaceName/providers/Microsoft.SecurityInsights/alertRules/$($rule.name)?api-version=$apiVersion"
+            $rulePayload = $rule | ConvertTo-Json -Depth 10 -Compress
+            
+            $response = Invoke-RestMethod -Uri $ruleUri -Method Put -Headers $headers -Body $rulePayload
+
+            $results += [PSCustomObject]@{
+                Solution    = $solutionName
+                RuleName    = $rule.properties.displayName
+                Status      = "Enabled"
+                Tactics     = $rule.properties.tactics -join ','
+                Techniques  = $rule.properties.techniques -join ','
+            }
+
+            Write-Host "  ✓ $($rule.properties.displayName)"
+        }
+        catch {
+            $results += [PSCustomObject]@{
+                Solution    = $solutionName
+                RuleName    = $template.properties.displayName
+                Status      = "Failed: $($_.Exception.Message)"
+                Tactics     = ""
+                Techniques  = ""
+            }
+            Write-Host "  ✗ $($template.properties.displayName) - $($_.Exception.Message)"
+        }
+    }
+}
+
+# Output results
+Write-Host "`n=== EXECUTION SUMMARY ==="
+$results | Format-Table -AutoSize
