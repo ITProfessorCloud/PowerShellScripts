@@ -1,0 +1,32 @@
+# Configuration
+$appId = "<Application_ID>"       # Managed Identity's Application (Client) ID
+$objectId = "<Client ID>"     # Managed Identity's Object ID
+$permission = "<API_Permission>"                     # Microsoft Graph permission
+$resourceId = "00000003-0000-0000-c000-000000000000"   # Microsoft Graph's fixed App ID
+
+# Connect to Azure AD (requires AzureAD module)
+Connect-AzureAD
+
+# Step 1: Get Microsoft Graph Service Principal
+$graphSp = Get-AzureADServicePrincipal -Filter "AppId eq '$resourceId'"
+
+# Step 2: Find the App Role ID for User.ReadWrite.All
+$appRole = $graphSp.AppRoles | Where-Object { $_.Value -eq $permission }
+
+if (-not $appRole) {
+    throw "App Role $permission not found in Microsoft Graph"
+}
+
+# Step 3: Assign the permission to the Managed Identity
+New-AzureADServiceAppRoleAssignment `
+    -ObjectId $objectId `
+    -PrincipalId $objectId `
+    -ResourceId $graphSp.ObjectId `
+    -Id $appRole.Id
+
+# Step 4: Verify the assignment
+Get-AzureADServiceAppRoleAssignment -ObjectId $objectId | 
+    Where-Object { $_.Id -eq $appRole.Id } |
+    Format-List *
+
+Write-Host "Successfully assigned $permission to Managed Identity $appId"
