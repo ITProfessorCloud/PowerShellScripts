@@ -21,12 +21,8 @@ A PowerShell script to automatically close all open Microsoft Sentinel incidents
 
 ## Installation
 
-1. Clone this repository:
-   ```powershell
-   git clone https://github.com/yourusername/sentinel-bulk-closer.git
-   cd sentinel-bulk-closer
 
-2. Authenticate to Azure:
+1. Authenticate to Azure:
 ```powershell
 Connect-AzAccount
 ```
