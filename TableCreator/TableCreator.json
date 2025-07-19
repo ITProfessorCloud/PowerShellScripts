@@ -1,0 +1,160 @@
+param (
+    [string]$tableName,
+    [string]$newTableName,
+    [string]$type,
+    [int]$retention,
+    [int]$totalRetention,
+    [switch]$ConvertToString
+)
+
+$resourceId = "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP/providers/Microsoft.OperationalInsights/workspaces/YOUR_WORKSPACE_NAME"
+
+Write-Host "`n +=======================+"
+Write-Host " | Table creator by IT Professor |"
+Write-Host " +=======================+`n"
+
+function PromptForInput {
+    param ([string]$promptMessage)
+    do {
+        $inputValue = Read-Host -Prompt $promptMessage
+    } while (-not $inputValue)
+    return $inputValue
+}
+
+# Prompt for missing inputs
+if (-not $tableName)     { $tableName     = PromptForInput "Enter TableName to get Schema from" }
+if (-not $newTableName)  { $newTableName  = PromptForInput "Enter new TableName (remember _CL suffix)" }
+
+# Table type validation
+if (-not $type) {
+    $type = Read-Host -Prompt "Enter table type (analytics, basic, aux/auxiliary). Press Enter for 'analytics'"
+}
+if ($type.ToLower() -eq "aux") { $type = "auxiliary" }
+$type = $type.ToLower()
+$validTypes = @("auxiliary", "basic", "analytics")
+if (-not ($validTypes -contains $type)) {
+    Write-Host "[Info] Invalid or no type provided. Defaulting to 'analytics'."
+    $type = 'analytics'
+}
+
+# Prompt for retention values
+if (-not $retention -and $type -eq "analytics") {
+    $retention = Read-Host -Prompt "Enter interactive retention in days (30-730)"
+}
+if (-not $totalRetention) {
+    $totalRetention = Read-Host -Prompt "Enter total retention in days (30-4383)"
+}
+
+# Fetch table schema
+Write-Host "[Querying $tableName schema...]"
+$query = "$tableName | getschema | project ColumnName, ColumnType"
+$body = @{ query = $query } | ConvertTo-Json -Depth 2
+$response = Invoke-AzRestMethod -Path "$resourceId/query?api-version=2017-10-01" -Method POST -Payload $body
+
+if ($response.StatusCode -ne 200 -and $response.StatusCode -ne 202) {
+    Write-Host "[Error] Failed to query '$TableName'. Status code: $($response.StatusCode)" -ForegroundColor Red
+    exit
+}
+Write-Host "[Schema fetched successfully]"
+
+# Parse schema response
+$data = $response.Content | ConvertFrom-Json
+$columnsMeta = $data.tables[0].columns
+$rows = $data.tables[0].rows
+$queryResult = $rows | ForEach-Object {
+    $obj = @{}
+    for ($i = 0; $i -lt $columnsMeta.Count; $i++) {
+        $obj[$columnsMeta[$i].name] = $_[$i]
+    }
+    [pscustomobject]$obj
+}
+
+$StringList = @()
+$columns = $queryResult | Where-Object {
+    $_.ColumnName -notin @("TenantId", "Type", "Id", "MG")
+} | ForEach-Object {
+    if ($type -eq "auxiliary" -and $_.ColumnType -eq "bool") {
+        $_.ColumnType = "boolean"
+    }
+
+    if ($type -eq "auxiliary" -and $_.ColumnType -eq "dynamic") {
+        if ($ConvertToString) {
+            $StringList += $_.ColumnName
+            $_.ColumnName += "_str"
+            $_.ColumnType = "string"
+        } else {
+            Write-Host "[SKIPPING] $_.ColumnName (dynamic not supported in Auxiliary tables)" 
+            return
+        }
+    }
+
+    # Manual fixes for known schema issues
+    if ($tableName -eq "SecurityEvent" -and $_.ColumnName -in @("InterfaceUuid", "LogonGuid", "SourceComputerId", "SubcategoryGuid", "TargetLogonGuid")) {
+        $_.ColumnType = "guid"
+    }
+    if ($tableName -eq "SigninLogs" -and $_.ColumnName -eq "OriginalRequestId") {
+        $_.ColumnType = "guid"
+    }
+
+    @{
+        name = $_.ColumnName
+        type = $_.ColumnType
+    }
+}
+
+# Build table parameters
+$tableParams = @{
+    properties = @{
+        schema = @{
+            name    = $newTableName
+            columns = $columns
+        }
+    }
+}
+
+switch ($type) {
+    "auxiliary" {
+        $tableParams.properties.plan = "Auxiliary"
+        Write-Host "[Plan: Auxiliary | Retention: fixed 30 days]"
+    }
+    "analytics" {
+        $tableParams.properties.plan = "Analytics"
+        if ($retention -ge 30 -and $retention -le 730) {
+            $tableParams.properties.retentionInDays = $retention
+            Write-Host "[Plan: Analytics | Retention: $retention days]"
+        }
+    }
+    "basic" {
+        $tableParams.properties.plan = "Basic"
+        Write-Host "[Plan: Basic | Retention: fixed 30 days]"
+    }
+}
+
+if ($totalRetention -ge 30 -and $totalRetention -le 4383) {
+    $tableParams.properties.totalRetentionInDays = $totalRetention
+    Write-Host "[Total Retention: $totalRetention days]"
+}
+
+$tableParamsJson = $tableParams | ConvertTo-Json -Depth 10
+Write-Host "[Creating table: $newTableName]"
+
+$response = Invoke-AzRestMethod -Path "$resourceId/tables/${newTableName}?api-version=2023-01-01-preview" -Method PUT -Payload $tableParamsJson
+
+if ($response.StatusCode -eq 200 -or $response.StatusCode -eq 202) {
+    Write-Host "[Success] Table '$newTableName' created with status code $($response.StatusCode)" -ForegroundColor Green
+} else {
+    Write-Host "[Error] Failed to create '$newTableName'. Status code: $($response.StatusCode)" -ForegroundColor Red
+    $errorContent = $response.Content | ConvertFrom-Json
+    if ($errorContent.error) {
+        Write-Host "[Error Code] $($errorContent.error.code)" -ForegroundColor Red
+        Write-Host "[Error Message] $($errorContent.error.message)" -ForegroundColor Red
+    }
+}
+
+# Show transform KQL if dynamic fields were converted
+if ($StringList) {
+    $extendParts = ($StringList | ForEach-Object { "$($_)_str = tostring($_)" }) -join ", "
+    $transformKql = "source | extend $extendParts"
+    Write-Host "`n[NOTICE] Dynamic columns converted to string. Include the following in DCR transformKql:"
+    Write-Host "`"transformKql`": `"$transformKql`""
+}
