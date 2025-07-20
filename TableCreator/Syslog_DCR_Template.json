@@ -1,83 +1,103 @@
 {
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "dataCollectionRules_Syslog_name": {
-      "type": "String",
-      "defaultValue": "**Syslog-DCR-Name**" // ❗️**CHANGE THIS TO YOUR DCR NAME**
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "dcrName": {
+            "defaultValue": "ITPro_Syslog",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the Data Collection Rule (e.g., 'ITPro_Syslog')."
+            }
+        },
+        "workspaceResourceId": {
+            "defaultValue": "/subscriptions/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX/resourceGroups/YOUR-RG/providers/Microsoft.OperationalInsights/workspaces/YOUR-WORKSPACE",
+            "type": "String",
+            "metadata": {
+                "description": "Full resource ID of the Log Analytics workspace (e.g., '/subscriptions/.../workspaces/NAME')."
+            }
+        },
+        "location": {
+            "defaultValue": "uksouth",
+            "type": "String",
+            "metadata": {
+                "description": "Azure region for the DCR (e.g., 'uksouth')."
+            }
+        },
+        "auxiliaryTableName": {
+            "defaultValue": "SyslogAux_CL",
+            "type": "String",
+            "metadata": {
+                "description": "Name of the auxiliary table (e.g., 'SyslogAux_CL'). Must end with '_CL'."
+            }
+        }
     },
-    "location": {
-      "type": "String",
-      "defaultValue": "**westeurope**" // ❗️**CHANGE TO YOUR REGION (e.g. westeurope, uksouth, etc.)**
-    },
-    "workspaceSubscriptionId": {
-      "type": "String",
-      "defaultValue": "**00000000-0000-0000-0000-000000000000**" // ❗️**CHANGE TO YOUR SUBSCRIPTION ID**
-    },
-    "workspaceResourceGroup": {
-      "type": "String",
-      "defaultValue": "**MyResourceGroup**" // ❗️**CHANGE TO YOUR RESOURCE GROUP**
-    },
-    "workspaceName": {
-      "type": "String",
-      "defaultValue": "**MyLogAnalyticsWorkspace**" // ❗️**CHANGE TO YOUR WORKSPACE NAME**
-    }
-  },
-  "variables": {
-    "workspaceResourceId": "[format('/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.OperationalInsights/workspaces/{2}', parameters('workspaceSubscriptionId'), parameters('workspaceResourceGroup'), parameters('workspaceName'))]"
-  },
-  "resources": [
-    {
-      "type": "Microsoft.Insights/dataCollectionRules",
-      "apiVersion": "2023-03-11",
-      "name": "[parameters('dataCollectionRules_Syslog_name')]",
-      "location": "[parameters('location')]",
-      "tags": {
-        "createdBy": "Sentinel"
-      },
-      "kind": "Linux",
-      "properties": {
-        "dataSources": {
-          "syslog": [
-            {
-              "streams": [
-                "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
-              ],
-              "facilityNames": ["syslog"],
-              "logLevels": [
-                "Info", "Notice", "Warning", "Error", "Critical", "Alert", "Emergency"
-              ],
-              "name": "sysLogsDataSource-Default1"
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Insights/dataCollectionRules",
+            "apiVersion": "2023-03-11",
+            "name": "[parameters('dcrName')]",
+            "location": "[parameters('location')]",
+            "tags": {
+                "createdBy": "Sentinel"
             },
-            {
-              "streams": [
-                "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
-              ],
-              "facilityNames": ["nopri"],
-              "logLevels": ["Emergency"],
-              "name": "sysLogsDataSource-Default2"
+            "kind": "Linux",
+            "properties": {
+                "dataSources": {
+                    "syslog": [
+                        {
+                            "streams": [
+                                "Microsoft-Syslog"
+                            ],
+                            "facilityNames": [
+                                "syslog"
+                            ],
+                            "logLevels": [
+                                "Info",
+                                "Notice",
+                                "Warning",
+                                "Error",
+                                "Critical",
+                                "Alert",
+                                "Emergency"
+                            ],
+                            "name": "sysLogsDataSource-1249808082"
+                        },
+                        {
+                            "streams": [
+                                "Microsoft-Syslog"
+                            ],
+                            "facilityNames": [
+                                "nopri"
+                            ],
+                            "logLevels": [
+                                "Emergency"
+                            ],
+                            "name": "sysLogsDataSource-1697966155"
+                        }
+                    ]
+                },
+                "destinations": {
+                    "logAnalytics": [
+                        {
+                            "workspaceResourceId": "[parameters('workspaceResourceId')]",
+                            "name": "DataCollectionEvent"
+                        }
+                    ]
+                },
+                "dataFlows": [
+                    {
+                        "streams": [
+                            "Microsoft-Syslog"
+                        ],
+                        "destinations": [
+                            "DataCollectionEvent"
+                        ],
+                        "transformKql": "source | extend Computer = tostring(Computer), TimeGenerated = todatetime(TimeGenerated), Facility = tostring(Facility), SeverityLevel = tostring(SeverityLevel), SyslogMessage = tostring(SyslogMessage), ProcessID = toint(ProcessID), HostName = tostring(HostName), ProcessName = tostring(ProcessName), MG = tostring(MG)",
+                        "outputStream": "[concat('Custom-', parameters('auxiliaryTableName'))]"
+                    }
+                ]
             }
-          ]
-        },
-        "destinations": {
-          "logAnalytics": [
-            {
-              "workspaceResourceId": "[variables('workspaceResourceId')]",
-              "name": "DataCollectionEvent"
-            }
-          ]
-        },
-        "dataFlows": [
-          {
-            "streams": [
-              "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
-            ],
-            "destinations": ["DataCollectionEvent"],
-            "transformKql": "[concat('source | extend Computer = tostring(Computer), TimeGenerated = todatetime(TimeGenerated), Facility = tostring(Facility), SeverityLevel = tostring(SeverityLevel), Message = tostring(Message), ProcessID = toint(ProcessID), HostName = tostring(HostName), ProcessName = tostring(ProcessName), MG = tostring(MG)')]",
-            "outputStream": "[concat('Custom-', parameters('dataCollectionRules_Syslog_name'), 'Aux_CL')]"
-          }
-        ]
-      }
-    }
-  ]
+        }
+    ]
 }
