@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "dataCollectionRules_Syslog_name": {
+      "type": "String",
+      "defaultValue": "**Syslog-DCR-Name**" // ❗️**CHANGE THIS TO YOUR DCR NAME**
+    },
+    "location": {
+      "type": "String",
+      "defaultValue": "**westeurope**" // ❗️**CHANGE TO YOUR REGION (e.g. westeurope, uksouth, etc.)**
+    },
+    "workspaceSubscriptionId": {
+      "type": "String",
+      "defaultValue": "**00000000-0000-0000-0000-000000000000**" // ❗️**CHANGE TO YOUR SUBSCRIPTION ID**
+    },
+    "workspaceResourceGroup": {
+      "type": "String",
+      "defaultValue": "**MyResourceGroup**" // ❗️**CHANGE TO YOUR RESOURCE GROUP**
+    },
+    "workspaceName": {
+      "type": "String",
+      "defaultValue": "**MyLogAnalyticsWorkspace**" // ❗️**CHANGE TO YOUR WORKSPACE NAME**
+    }
+  },
+  "variables": {
+    "workspaceResourceId": "[format('/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.OperationalInsights/workspaces/{2}', parameters('workspaceSubscriptionId'), parameters('workspaceResourceGroup'), parameters('workspaceName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Insights/dataCollectionRules",
+      "apiVersion": "2023-03-11",
+      "name": "[parameters('dataCollectionRules_Syslog_name')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "createdBy": "Sentinel"
+      },
+      "kind": "Linux",
+      "properties": {
+        "dataSources": {
+          "syslog": [
+            {
+              "streams": [
+                "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
+              ],
+              "facilityNames": ["syslog"],
+              "logLevels": [
+                "Info", "Notice", "Warning", "Error", "Critical", "Alert", "Emergency"
+              ],
+              "name": "sysLogsDataSource-Default1"
+            },
+            {
+              "streams": [
+                "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
+              ],
+              "facilityNames": ["nopri"],
+              "logLevels": ["Emergency"],
+              "name": "sysLogsDataSource-Default2"
+            }
+          ]
+        },
+        "destinations": {
+          "logAnalytics": [
+            {
+              "workspaceResourceId": "[variables('workspaceResourceId')]",
+              "name": "DataCollectionEvent"
+            }
+          ]
+        },
+        "dataFlows": [
+          {
+            "streams": [
+              "[concat('Microsoft-', parameters('dataCollectionRules_Syslog_name'))]"
+            ],
+            "destinations": ["DataCollectionEvent"],
+            "transformKql": "[concat('source | extend Computer = tostring(Computer), TimeGenerated = todatetime(TimeGenerated), Facility = tostring(Facility), SeverityLevel = tostring(SeverityLevel), Message = tostring(Message), ProcessID = toint(ProcessID), HostName = tostring(HostName), ProcessName = tostring(ProcessName), MG = tostring(MG)')]",
+            "outputStream": "[concat('Custom-', parameters('dataCollectionRules_Syslog_name'), 'Aux_CL')]"
+          }
+        ]
+      }
+    }
+  ]
+}
