@@ -6,27 +6,18 @@
 
 # Your environment parameters
 $subscriptionId = "<subscription ID>"
-$resourceGroupName = "<LogAnalyticWorkspace_ResourceGroupName>"
-$workspaceName = "<LogAnalyticWorkspace_Name>"
+$resourceGroupName = "<Resource_Group_Name>"
+$workspaceName = "<Log_Analytics_Workspace_Name>"
 $enableRules = "Yes"  # "Yes" to enable, "No" to create disabled
 
 # API Configuration
 $apiVersion = "2024-10-01-preview"  # Supports MITRE ATT&CK sub-techniques
 
-# Initialize connection
-try {
-    Connect-AzAccount -Subscription $subscriptionId -ErrorAction Stop | Out-Null
-}
-catch {
-    Write-Host "Failed to connect: $_"
-    exit
-}
-
-# Get auth token
-$token = (Get-AzAccessToken -ResourceUrl "https://management.azure.com").Token
+# Get auth token using Azure CLI (already logged in via `az login` or Cloud Shell)
+$token = az account get-access-token --resource "https://management.azure.com" --query accessToken -o tsv
 $headers = @{
     'Authorization' = "Bearer $token"
-    'Content-Type' = 'application/json'
+    'Content-Type'  = 'application/json'
 }
 
 # Get all content packages
