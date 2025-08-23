@@ -1,40 +1,33 @@
-<#
-.SYNOPSIS
-Closes only Microsoft Sentinel incidents matching a specific Title.
-.DESCRIPTION
-Fetches open incidents, filters by Title, and closes the matching ones with retries and pagination.
-#>
-
 # Configuration
 $config = @{
-    ResourceGroupName = "<resource_group_name"
-    WorkspaceName    = "<log_analytic_workspace_name>"
-    SubscriptionId   = "<subscription_id>"
-    PageSize          = 100            # Reduced for better pagination handling
-    RetryAttempts     = 2              # Retries per incident
-    DelayBetweenCalls = 2              # Seconds between API calls
-    TargetTitle       = "<sentinel_incident_title>" # Title of incident to close
+    ResourceGroupName  = "<Resource_Group_Name(Sentinel one)>"
+    WorkspaceName      = "<Log_Analyitcs_Workspace_ID>"
+    SubscriptionId     = "<Subscription ID>"
+    PageSize           = 100
+    RetryAttempts      = 2
+    DelayBetweenCalls  = 2
+    CloseMode          = "All"     # Options: "All", "Title", "Severity"
+    TargetTitle        = "<Insert Title of the Incident>"
+    TargetSeverity     = "High"    # Used if CloseMode = "Severity"
+    Verbose            = $true
 }
 
-# Initialize counters
 $totalClosed = 0
 $failedIncidents = [System.Collections.Generic.List[string]]::new()
 
-function Close-SpecificIncidents {
+function Close-Incidents {
     $continue = $true
     $nextLink = $null
 
     while ($continue) {
         try {
-            # Get incidents with pagination
-            if ($nextLink) {
-                $incidents = Get-AzSentinelIncident -NextLink $nextLink
-            }
-            else {
-                $incidents = Get-AzSentinelIncident -ResourceGroupName $config.ResourceGroupName `
-                                                    -WorkspaceName $config.WorkspaceName `
-                                                    -Filter "properties/status eq 'New'" `
-                                                    -Top $config.PageSize
+            $incidents = if ($nextLink) {
+                Get-AzSentinelIncident -NextLink $nextLink
+            } else {
+                Get-AzSentinelIncident -ResourceGroupName $config.ResourceGroupName `
+                                        -WorkspaceName $config.WorkspaceName `
+                                        -Filter "properties/status eq 'New'" `
+                                        -Top $config.PageSize
             }
 
             if (-not $incidents -or $incidents.Count -eq 0) {
@@ -42,15 +35,17 @@ function Close-SpecificIncidents {
                 break
             }
 
-            # Store nextLink for pagination
             $nextLink = $incidents.NextLink
 
-            # Process incidents
             foreach ($incident in $incidents) {
-                # Match Title (case-insensitive)
-                if ($incident.Title.ToLower() -ne $config.TargetTitle.ToLower()) {
-                    continue
+                $shouldClose = switch ($config.CloseMode) {
+                    "All"      { $true }
+                    "Title"    { $incident.Title -eq $config.TargetTitle }
+                    "Severity" { $incident.Severity -eq $config.TargetSeverity }
+                    default    { $false }
                 }
+
+                if (-not $shouldClose) { continue }
 
                 $retryCount = 0
                 $closed = $false
@@ -70,7 +65,7 @@ function Close-SpecificIncidents {
 
                         $script:totalClosed++
                         $closed = $true
-                        Write-Host "Closed incident: $($incident.Name) with Title: $($incident.Title)" -ForegroundColor Green
+                        if ($config.Verbose) { Write-Host "Closed incident: $($incident.Name) - $($incident.Title)" -ForegroundColor Green }
                     } catch {
                         $retryCount++
                         if ($retryCount -ge $config.RetryAttempts) {
@@ -84,7 +79,6 @@ function Close-SpecificIncidents {
 
             Write-Host "Processed $($incidents.Count) incidents | Total closed so far: $totalClosed"
 
-            # Add delay between API calls
             Start-Sleep -Seconds $config.DelayBetweenCalls
 
         } catch {
@@ -94,21 +88,18 @@ function Close-SpecificIncidents {
     }
 }
 
-# Main execution
-Write-Host "Starting specific incident closure process..." -ForegroundColor Cyan
-Write-Host "Configuration:"
-Write-Host "- Page Size: $($config.PageSize)"
-Write-Host "- Retry Attempts: $($config.RetryAttempts)"
-Write-Host "- Delay Between Calls: $($config.DelayBetweenCalls)s"
-Write-Host "- Target Title: '$($config.TargetTitle)'" -ForegroundColor Yellow
-Write-Host ""
+# Main Execution
+Write-Host "Starting incident closure process..." -ForegroundColor Cyan
+Write-Host "Close Mode: $($config.CloseMode)" -ForegroundColor Yellow
+if ($config.CloseMode -eq "Title") { Write-Host "Target Title: $($config.TargetTitle)" }
+if ($config.CloseMode -eq "Severity") { Write-Host "Target Severity: $($config.TargetSeverity)" }
 
-Close-SpecificIncidents
+Close-Incidents
 
 # Results
 Write-Host @"
 ============================================
-Specific closure process completed
+Incident closure process completed
 Total incidents closed: $totalClosed
 Failed to close: $($failedIncidents.Count)
 ============================================
